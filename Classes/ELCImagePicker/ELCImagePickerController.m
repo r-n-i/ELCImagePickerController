@@ -14,6 +14,9 @@
 #import <CoreLocation/CoreLocation.h>
 #import <MobileCoreServices/UTCoreTypes.h>
 #import "ELCConsole.h"
+#import <Photos/PHImageManager.h>
+
+NSString const * ELCImagePickerControllerVideoDataKey = @"ELCImagePickerControllerVideoDataKey";
 
 @implementation ELCImagePickerController
 
@@ -73,11 +76,10 @@
     if (!shouldSelect) {
         NSString *title = [NSString stringWithFormat:NSLocalizedString(@"Only %d photos please!", nil), self.maximumImagesCount];
         NSString *message = [NSString stringWithFormat:NSLocalizedString(@"You can only send %d photos at a time.", nil), self.maximumImagesCount];
-        [[[UIAlertView alloc] initWithTitle:title
-                                    message:message
-                                   delegate:nil
-                          cancelButtonTitle:nil
-                          otherButtonTitles:NSLocalizedString(@"Okay", nil), nil] show];
+        [self showAlertWithTitle:title
+                                      message:message
+                                 cancelButton:NSLocalizedString(@"Okay", nil)
+                               fromController:self];
     }
     return shouldSelect;
 }
@@ -91,54 +93,61 @@
 {
 	NSMutableArray *returnArray = [[NSMutableArray alloc] init];
 	
+    NSUInteger __block assetsLoaded = 0;
+    NSUInteger __block assetsToLoad = assets.count;
 	for(ELCAsset *elcasset in assets) {
-        ALAsset *asset = elcasset.asset;
-		id obj = [asset valueForProperty:ALAssetPropertyType];
-		if (!obj) {
-			continue;
-		}
+        PHAsset *asset = elcasset.asset;
+        PHAssetMediaType type = asset.mediaType;
+        
 		NSMutableDictionary *workingDictionary = [[NSMutableDictionary alloc] init];
 		
-		CLLocation* wgs84Location = [asset valueForProperty:ALAssetPropertyLocation];
+		CLLocation* wgs84Location = asset.location;
 		if (wgs84Location) {
-			[workingDictionary setObject:wgs84Location forKey:ALAssetPropertyLocation];
+			[workingDictionary setObject:wgs84Location forKey:@"Location"];
 		}
         
-        [workingDictionary setObject:obj forKey:UIImagePickerControllerMediaType];
+        [workingDictionary setObject:@(type) forKey:UIImagePickerControllerMediaType];
 
         //This method returns nil for assets from a shared photo stream that are not yet available locally. If the asset becomes available in the future, an ALAssetsLibraryChangedNotification notification is posted.
-        ALAssetRepresentation *assetRep = [asset defaultRepresentation];
-
-        if(assetRep != nil) {
-            if (_returnsImage) {
-                CGImageRef imgRef = nil;
-                //defaultRepresentation returns image as it appears in photo picker, rotated and sized,
-                //so use UIImageOrientationUp when creating our image below.
-                UIImageOrientation orientation = UIImageOrientationUp;
-            
-                if (_returnsOriginalImage) {
-                    imgRef = [assetRep fullResolutionImage];
-                    orientation = [assetRep orientation];
-                } else {
-                    imgRef = [assetRep fullScreenImage];
+        if (asset.mediaType == PHAssetMediaTypeVideo) {
+            PHVideoRequestOptions *options = [[PHVideoRequestOptions alloc] init];
+            options.networkAccessAllowed = NO;
+            [[PHImageManager defaultManager] requestAVAssetForVideo:asset options:options resultHandler:^(AVAsset * _Nullable asset, AVAudioMix * _Nullable audioMix, NSDictionary * _Nullable info) {
+                NSData *data = [NSData dataWithContentsOfURL:((AVURLAsset*)asset).URL];
+                [workingDictionary setObject:data forKey:ELCImagePickerControllerVideoDataKey];
+                [returnArray addObject:workingDictionary];
+                assetsLoaded ++;
+                if (assetsLoaded == assetsToLoad) {
+                    [self notifyPickerCompleteWithArray:returnArray];
                 }
-                UIImage *img = [UIImage imageWithCGImage:imgRef
-                                                   scale:1.0f
-                                             orientation:orientation];
-                [workingDictionary setObject:img forKey:UIImagePickerControllerOriginalImage];
-            }
-
-            [workingDictionary setObject:[[asset valueForProperty:ALAssetPropertyURLs] valueForKey:[[[asset valueForProperty:ALAssetPropertyURLs] allKeys] objectAtIndex:0]] forKey:UIImagePickerControllerReferenceURL];
-            
-            [returnArray addObject:workingDictionary];
+            }];
+        } else {
+            PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
+            options.synchronous = YES;
+            options.networkAccessAllowed = NO;
+            [[PHImageManager defaultManager] requestImageForAsset:asset targetSize:PHImageManagerMaximumSize contentMode:PHImageContentModeDefault options:options resultHandler:^(UIImage * _Nullable result, NSDictionary * _Nullable info) {
+                if (result != nil) {
+                    [workingDictionary setObject:result forKey:UIImagePickerControllerOriginalImage];
+                }
+                [returnArray addObject:workingDictionary];
+                assetsLoaded ++;
+                if (assetsLoaded == assetsToLoad) {
+                    [self notifyPickerCompleteWithArray:returnArray];
+                }
+            }];
         }
 		
-	}    
-	if (_imagePickerDelegate != nil && [_imagePickerDelegate respondsToSelector:@selector(elcImagePickerController:didFinishPickingMediaWithInfo:)]) {
-		[_imagePickerDelegate performSelector:@selector(elcImagePickerController:didFinishPickingMediaWithInfo:) withObject:self withObject:returnArray];
-	} else {
-        [self popToRootViewControllerAnimated:NO];
-    }
+	}
+}
+
+- (void)notifyPickerCompleteWithArray:(NSArray*)assets {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (_imagePickerDelegate != nil && [_imagePickerDelegate respondsToSelector:@selector(elcImagePickerController:didFinishPickingMediaWithInfo:)]) {
+            [_imagePickerDelegate performSelector:@selector(elcImagePickerController:didFinishPickingMediaWithInfo:) withObject:self withObject:assets];
+        } else {
+            [self popToRootViewControllerAnimated:NO];
+        }
+    });
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation
@@ -158,6 +167,18 @@
 - (void)setOnOrder:(BOOL)onOrder
 {
     [[ELCConsole mainConsole] setOnOrder:onOrder];
+}
+
+- (void)showAlertWithTitle:(NSString *)title message:(NSString *)message cancelButton:(NSString *)cancel fromController:(UIViewController*)controller {
+    UIAlertController* alertView = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    if (cancel.length > 0) {
+        UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:cancel style:UIAlertActionStyleCancel handler:nil];
+        [alertView addAction:cancelAction];
+    }
+    self.popoverPresentationController.sourceView = controller.view;
+    self.popoverPresentationController.sourceRect = controller.view.frame;
+    self.popoverPresentationController.permittedArrowDirections = 0;
+    [controller presentViewController:self animated:YES completion:nil];
 }
 
 @end

@@ -9,10 +9,9 @@
 #import "ELCImagePickerController.h"
 #import "ELCAssetTablePicker.h"
 #import <MobileCoreServices/UTCoreTypes.h>
+#import <Photos/Photos.h>
 
-@interface ELCAlbumPickerController ()
-
-@property (nonatomic, strong) ALAssetsLibrary *library;
+@interface ELCAlbumPickerController () <PHPhotoLibraryChangeObserver>
 
 @end
 
@@ -36,71 +35,83 @@
     NSMutableArray *tempArray = [[NSMutableArray alloc] init];
 	self.assetGroups = tempArray;
     
-    ALAssetsLibrary *assetLibrary = [[ALAssetsLibrary alloc] init];
-    self.library = assetLibrary;
-
-    // Load Albums into assetGroups
-    dispatch_async(dispatch_get_main_queue(), ^
-    {
-        @autoreleasepool {
-        
-        // Group enumerator Block
-            void (^assetGroupEnumerator)(ALAssetsGroup *, BOOL *) = ^(ALAssetsGroup *group, BOOL *stop) 
-            {
-                if (group == nil) {
-                    return;
-                }
-                
-                // added fix for camera albums order
-                NSString *sGroupPropertyName = (NSString *)[group valueForProperty:ALAssetsGroupPropertyName];
-                NSUInteger nType = [[group valueForProperty:ALAssetsGroupPropertyType] intValue];
-                
-                if ([[sGroupPropertyName lowercaseString] isEqualToString:@"camera roll"] && nType == ALAssetsGroupSavedPhotos) {
-                    [self.assetGroups insertObject:group atIndex:0];
-                }
-                else {
-                    [self.assetGroups addObject:group];
-                }
-
-                // Reload albums
-                [self performSelectorOnMainThread:@selector(reloadTableView) withObject:nil waitUntilDone:YES];
-            };
-            
-            // Group Enumerator Failure Block
-            void (^assetGroupEnumberatorFailure)(NSError *) = ^(NSError *error) {
-              
-                if ([ALAssetsLibrary authorizationStatus] == ALAuthorizationStatusDenied) {
-                    NSString *errorMessage = NSLocalizedString(@"This app does not have access to your photos or videos. You can enable access in Privacy Settings.", nil);
-                    [[[UIAlertView alloc] initWithTitle:NSLocalizedString(@"Access Denied", nil) message:errorMessage delegate:nil cancelButtonTitle:NSLocalizedString(@"Ok", nil) otherButtonTitles:nil] show];
-                  
-                } else {
-                    NSString *errorMessage = [NSString stringWithFormat:@"Album Error: %@ - %@", [error localizedDescription], [error localizedRecoverySuggestion]];
-                    [[[UIAlertView alloc] initWithTitle:NSLocalizedString(@"Error", nil) message:errorMessage delegate:nil cancelButtonTitle:NSLocalizedString(@"Ok", nil) otherButtonTitles:nil] show];
-                }
-
-                [self.navigationItem setTitle:nil];
-                NSLog(@"A problem occured %@", [error description]);	                                 
-            };	
-                    
-            // Enumerate Albums
-            [self.library enumerateGroupsWithTypes:ALAssetsGroupAll
-                                   usingBlock:assetGroupEnumerator 
-                                 failureBlock:assetGroupEnumberatorFailure];
-        
+    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+        if (status == PHAuthorizationStatusAuthorized) {
+            [self loadAlbums];
+        } else {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSString *errorMessage = NSLocalizedString(@"This app does not have access to your photos or videos. You can enable access in Privacy Settings.", nil);
+                [self showAlertWithTitle:NSLocalizedString(@"Access Denied", nil)
+                                              message:errorMessage
+                                         cancelButton:NSLocalizedString(@"Ok", nil)
+                                       fromController:self];
+                [self.navigationItem setTitle:nil];[self.navigationItem setTitle:nil];
+            });
         }
-    });
+    }];
     
 }
 
 - (void)viewWillAppear:(BOOL)animated {
-    
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadTableView) name:ALAssetsLibraryChangedNotification object:nil];
+    [super viewWillAppear:animated];
+    [PHPhotoLibrary.sharedPhotoLibrary registerChangeObserver:self];
     [self.tableView reloadData];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
-    
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:ALAssetsLibraryChangedNotification object:nil];
+    [super viewWillDisappear:animated];
+    [PHPhotoLibrary.sharedPhotoLibrary unregisterChangeObserver:self];
+}
+
+- (void)photoLibraryDidChange:(PHChange *)changeInstance {
+    [self reloadTableView];
+}
+
+- (void)loadAlbums {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            NSNumber *filter = [self assetFilter];
+            PHFetchOptions *assetsFilter = [[PHFetchOptions alloc] init];
+            assetsFilter.predicate = [ELCAsset slowmoFilterPredicate];
+            if (filter) {
+                NSCompoundPredicate *predicate = [NSCompoundPredicate andPredicateWithSubpredicates:@[assetsFilter.predicate, [ELCAsset assetFilterPredicate:filter.integerValue]]];
+                assetsFilter.predicate = predicate;
+            }
+            NSArray *collectionsFetchResults;
+            
+            PHFetchResult *smartAlbums = [PHAssetCollection       fetchAssetCollectionsWithType:PHAssetCollectionTypeSmartAlbum
+                                                                                        subtype:PHAssetCollectionSubtypeAlbumRegular options:nil];
+            PHFetchResult *syncedAlbums = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeAlbum
+                                                                                   subtype:PHAssetCollectionSubtypeAlbumSyncedAlbum options:nil];
+            PHFetchResult *userCollections = [PHCollectionList fetchTopLevelUserCollectionsWithOptions:nil];
+            
+            // Add each PHFetchResult to the array
+            collectionsFetchResults = @[smartAlbums, userCollections, syncedAlbums];
+            
+            for (int i = 0; i < collectionsFetchResults.count; i ++) {
+                
+                PHFetchResult *fetchResult = collectionsFetchResults[i];
+                
+                for (int x = 0; x < fetchResult.count; x ++) {
+                    
+                    PHAssetCollection *collection = fetchResult[x];
+                    PHFetchResult *assetsFetchResult = [PHAsset fetchAssetsInAssetCollection:collection options:assetsFilter];
+                    if (assetsFetchResult.count > 0) {
+                        NSString *sGroupPropertyName = collection.localizedTitle;
+                        
+                        if ([[sGroupPropertyName lowercaseString] isEqualToString:@"camera roll"] ) {
+                            [self.assetGroups insertObject:collection atIndex:0];
+                        }
+                        else {
+                            [self.assetGroups addObject:collection];
+                        }
+                    }
+                    
+                }
+            }
+            [self performSelectorOnMainThread:@selector(reloadTableView) withObject:nil waitUntilDone:YES];
+        }
+    });
 }
 
 - (void)reloadTableView
@@ -124,19 +135,19 @@
 	[_parent selectedAssets:assets];
 }
 
-- (ALAssetsFilter *)assetFilter
+- (NSNumber *)assetFilter
 {
     if([self.mediaTypes containsObject:(NSString *)kUTTypeImage] && [self.mediaTypes containsObject:(NSString *)kUTTypeMovie])
     {
-        return [ALAssetsFilter allAssets];
+        return nil;
     }
     else if([self.mediaTypes containsObject:(NSString *)kUTTypeMovie])
     {
-        return [ALAssetsFilter allVideos];
+        return @(PHAssetMediaTypeVideo);
     }
     else
     {
-        return [ALAssetsFilter allPhotos];
+        return @(PHAssetMediaTypeImage);
     }
 }
 
@@ -167,17 +178,30 @@
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:CellIdentifier];
     }
     
-    // Get count
-    ALAssetsGroup *g = (ALAssetsGroup*)[self.assetGroups objectAtIndex:indexPath.row];
-    [g setAssetsFilter:[self assetFilter]];
-    NSInteger gCount = [g numberOfAssets];
+    NSNumber *filter = [self assetFilter];
+    PHFetchOptions *assetsFilter = [[PHFetchOptions alloc] init];
+    assetsFilter.predicate = [ELCAsset slowmoFilterPredicate];
+    if (filter) {
+        NSCompoundPredicate *predicate = [NSCompoundPredicate andPredicateWithSubpredicates:@[assetsFilter.predicate, [ELCAsset assetFilterPredicate:filter.integerValue]]];
+        assetsFilter.predicate = predicate;
+    }
     
-    cell.textLabel.text = [NSString stringWithFormat:@"%@ (%ld)",[g valueForProperty:ALAssetsGroupPropertyName], (long)gCount];
-    UIImage* image = [UIImage imageWithCGImage:[g posterImage]];
-    image = [self resize:image to:CGSizeMake(78, 78)];
-    [cell.imageView setImage:image];
-	[cell setAccessoryType:UITableViewCellAccessoryDisclosureIndicator];
-	
+    // Get count
+    PHAssetCollection *g = (PHAssetCollection*)[self.assetGroups objectAtIndex:indexPath.row];
+    PHFetchResult *assetsFetchResult = [PHAsset fetchAssetsInAssetCollection:g options:assetsFilter];
+    NSInteger gCount = assetsFetchResult.count;
+    
+    PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
+    options.resizeMode = PHImageRequestOptionsResizeModeExact;
+    [[PHImageManager defaultManager] requestImageForAsset:assetsFetchResult.firstObject targetSize:CGSizeMake(156,156) contentMode:PHImageContentModeAspectFill options:options resultHandler:^(UIImage * _Nullable result, NSDictionary * _Nullable info) {
+        cell.imageView.contentMode = UIViewContentModeScaleAspectFill;
+        cell.imageView.clipsToBounds = YES;
+        [cell.imageView setImage:result];
+    }];
+    
+    cell.textLabel.text = [NSString stringWithFormat:@"%@ (%ld)",g.localizedTitle, (long)gCount];
+    [cell setAccessoryType:UITableViewCellAccessoryDisclosureIndicator];
+    
     return cell;
 }
 
@@ -202,7 +226,7 @@
 	picker.parent = self;
 
     picker.assetGroup = [self.assetGroups objectAtIndex:indexPath.row];
-    [picker.assetGroup setAssetsFilter:[self assetFilter]];
+    [picker setAssetsFilter:[self assetFilter]];
     
 	picker.assetPickerFilterDelegate = self.assetPickerFilterDelegate;
 	
@@ -212,6 +236,18 @@
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
 	return 95;
+}
+
+- (void)showAlertWithTitle:(NSString *)title message:(NSString *)message cancelButton:(NSString *)cancel fromController:(UIViewController*)controller {
+    UIAlertController* alertView = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    if (cancel.length > 0) {
+        UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:cancel style:UIAlertActionStyleCancel handler:nil];
+        [alertView addAction:cancelAction];
+    }
+    self.popoverPresentationController.sourceView = controller.view;
+    self.popoverPresentationController.sourceRect = controller.view.frame;
+    self.popoverPresentationController.permittedArrowDirections = 0;
+    [controller presentViewController:self animated:YES completion:nil];
 }
 
 @end

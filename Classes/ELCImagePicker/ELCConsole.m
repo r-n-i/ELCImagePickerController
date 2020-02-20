@@ -34,14 +34,14 @@ static ELCConsole *_mainconsole;
     _mainconsole = nil;
 }
 
-- (void)addIndex:(int)index
+- (void)addIndex:(NSUInteger)index
 {
     if (![myIndex containsObject:@(index)]) {
         [myIndex addObject:@(index)];
     }
 }
 
-- (void)removeIndex:(int)index
+- (void)removeIndex:(NSUInteger)index
 {
     [myIndex removeObject:@(index)];
 }
@@ -64,7 +64,7 @@ static ELCConsole *_mainconsole;
     return (int)[myIndex count];
 }
 
-- (int)numOfSelectedElements {
+- (NSUInteger)numOfSelectedElements {
     
     return [myIndex count];
 }

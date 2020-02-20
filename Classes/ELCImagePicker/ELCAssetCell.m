@@ -9,6 +9,7 @@
 #import "ELCAsset.h"
 #import "ELCConsole.h"
 #import "ELCOverlayImageView.h"
+#import <Photos/PHImageManager.h>
 
 @interface ELCAssetCell ()
 
@@ -49,6 +50,8 @@
     for (ELCOverlayImageView *view in _overlayViewArray) {
         [view removeFromSuperview];
 	}
+    PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
+    options.resizeMode = PHImageRequestOptionsResizeModeExact;
     //set up a pointer here so we don't keep calling [UIImage imageNamed:] if creating overlays
     UIImage *overlayImage = nil;
     for (int i = 0; i < [_rowAssets count]; ++i) {
@@ -57,16 +60,21 @@
 
         if (i < [_imageViewArray count]) {
             UIImageView *imageView = [_imageViewArray objectAtIndex:i];
-            imageView.image = [UIImage imageWithCGImage:asset.asset.thumbnail];
+            [[PHImageManager defaultManager] requestImageForAsset:asset.asset targetSize:CGSizeMake(156,156) contentMode:PHImageContentModeAspectFill options:options resultHandler:^(UIImage * _Nullable result, NSDictionary * _Nullable info) {
+                imageView.image = result;
+            }];
         } else {
-            UIImageView *imageView = [[UIImageView alloc] initWithImage:[UIImage imageWithCGImage:asset.asset.thumbnail]];
+            UIImageView *imageView = [[UIImageView alloc] init];
+            [[PHImageManager defaultManager] requestImageForAsset:asset.asset targetSize:CGSizeMake(156,156) contentMode:PHImageContentModeAspectFill options:options resultHandler:^(UIImage * _Nullable result, NSDictionary * _Nullable info) {
+                imageView.image = result;
+            }];
             [_imageViewArray addObject:imageView];
         }
         
         if (i < [_overlayViewArray count]) {
             ELCOverlayImageView *overlayView = [_overlayViewArray objectAtIndex:i];
             overlayView.hidden = asset.selected ? NO : YES;
-            overlayView.labIndex.text = [NSString stringWithFormat:@"%d", asset.index + 1];
+            overlayView.labIndex.text = [NSString stringWithFormat:@"%lu", asset.index + 1];
         } else {
             if (overlayImage == nil) {
                 overlayImage = [UIImage imageNamed:@"Overlay.png"];
@@ -74,7 +82,7 @@
             ELCOverlayImageView *overlayView = [[ELCOverlayImageView alloc] initWithImage:overlayImage];
             [_overlayViewArray addObject:overlayView];
             overlayView.hidden = asset.selected ? NO : YES;
-            overlayView.labIndex.text = [NSString stringWithFormat:@"%d", asset.index + 1];
+            overlayView.labIndex.text = [NSString stringWithFormat:@"%lu", asset.index + 1];
         }
     }
 }
@@ -107,7 +115,7 @@
             }
             else
             {
-                int lastElement = [[ELCConsole mainConsole] numOfSelectedElements] - 1;
+                NSUInteger lastElement = [[ELCConsole mainConsole] numOfSelectedElements] - 1;
                 [[ELCConsole mainConsole] removeIndex:lastElement];
             }
             break;

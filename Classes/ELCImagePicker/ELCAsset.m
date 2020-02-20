@@ -13,10 +13,10 @@
 //Using auto synthesizers
 - (NSString *)description
 {
-    return [NSString stringWithFormat:@"ELCAsset index:%d",self.index];
+    return [NSString stringWithFormat:@"ELCAsset index:%lu",(unsigned long)self.index];
 }
 
-- (id)initWithAsset:(ALAsset*)asset
+- (id)initWithAsset:(PHAsset*)asset
 {
 	self = [super init];
 	if (self) {
@@ -68,6 +68,14 @@
         return NSOrderedAscending;
     }
     return NSOrderedSame;
+}
+
++ (NSPredicate*)assetFilterPredicate:(NSInteger)filter {
+    return [NSPredicate predicateWithFormat:@"mediaType = %d", filter];
+}
+
++ (NSPredicate*)slowmoFilterPredicate {
+    return [NSPredicate predicateWithFormat:@"!((mediaSubtype & %d) == %d)", PHAssetMediaSubtypeVideoHighFrameRate, PHAssetMediaSubtypeVideoHighFrameRate];
 }
 
 @end

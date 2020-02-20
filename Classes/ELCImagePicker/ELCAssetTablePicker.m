@@ -10,8 +10,9 @@
 #import "ELCAsset.h"
 #import "ELCAlbumPickerController.h"
 #import "ELCConsole.h"
+#import <Photos/PHFetchOptions.h>
 
-@interface ELCAssetTablePicker ()
+@interface ELCAssetTablePicker () <PHPhotoLibraryChangeObserver>
 
 @property (nonatomic, assign) int columns;
 
@@ -51,7 +52,7 @@
 	[self performSelectorInBackground:@selector(preparePhotos) withObject:nil];
     
     // Register for notifications when the photo library has changed
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(preparePhotos) name:ALAssetsLibraryChangedNotification object:nil];
+    [PHPhotoLibrary.sharedPhotoLibrary registerChangeObserver:self];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -64,7 +65,7 @@
 {
     [super viewWillDisappear:animated];
     [[ELCConsole mainConsole] removeAllIndex];
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:ALAssetsLibraryChangedNotification object:nil];
+    [PHPhotoLibrary.sharedPhotoLibrary unregisterChangeObserver:self];
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation
@@ -79,33 +80,38 @@
     [self.tableView reloadData];
 }
 
+- (void)photoLibraryDidChange:(PHChange *)changeInstance {
+    [self preparePhotos];
+}
+
 - (void)preparePhotos
 {
     @autoreleasepool {
         
         [self.elcAssets removeAllObjects];
-        [self.assetGroup enumerateAssetsUsingBlock:^(ALAsset *result, NSUInteger index, BOOL *stop) {
-            
-            if (result == nil) {
-                return;
-            }
-            
-            ELCAsset *elcAsset = [[ELCAsset alloc] initWithAsset:result];
+        
+        PHFetchOptions *assetsFilter = [[PHFetchOptions alloc] init];
+        // Filter out slow motion videos as processign them through PhotoKit is non-trivial
+        assetsFilter.predicate = [ELCAsset slowmoFilterPredicate];
+        
+        PHFetchResult *assetsFetchResult = [PHAsset fetchAssetsInAssetCollection:self.assetGroup options:assetsFilter];
+        [assetsFetchResult enumerateObjectsUsingBlock:^(PHAsset  * _Nonnull asset, NSUInteger idx, BOOL * _Nonnull stop) {
+            ELCAsset *elcAsset = [[ELCAsset alloc] initWithAsset:asset];
             [elcAsset setParent:self];
             
             BOOL isAssetFiltered = NO;
             if (self.assetPickerFilterDelegate &&
-               [self.assetPickerFilterDelegate respondsToSelector:@selector(assetTablePicker:isAssetFilteredOut:)])
+                [self.assetPickerFilterDelegate respondsToSelector:@selector(assetTablePicker:isAssetFilteredOut:)])
             {
                 isAssetFiltered = [self.assetPickerFilterDelegate assetTablePicker:self isAssetFilteredOut:(ELCAsset*)elcAsset];
             }
-
+            
             if (!isAssetFiltered) {
                 [self.elcAssets addObject:elcAsset];
             }
-
-         }];
-
+            
+        }];
+        
         dispatch_sync(dispatch_get_main_queue(), ^{
             [self.tableView reloadData];
             // scroll to bottom
@@ -114,12 +120,12 @@
             if (section >= 0 && row >= 0) {
                 NSIndexPath *ip = [NSIndexPath indexPathForRow:row
                                                      inSection:section];
-                        [self.tableView scrollToRowAtIndexPath:ip
-                                              atScrollPosition:UITableViewScrollPositionBottom
-                                                      animated:NO];
+                [self.tableView scrollToRowAtIndexPath:ip
+                                      atScrollPosition:UITableViewScrollPositionBottom
+                                              animated:NO];
             }
             
-            [self.navigationItem setTitle:self.singleSelection ? NSLocalizedString(@"Pick Photo", nil) : NSLocalizedString(@"Pick Photos", nil)];
+            [self.navigationItem setTitle:NSLocalizedString(@"ELCImagePicker_PickPhoto", nil)];
         });
     }
 }
@@ -193,7 +199,7 @@
         [(NSObject *)self.parent performSelector:@selector(selectedAssets:) withObject:singleAssetArray afterDelay:0];
     }
     
-    int numOfSelectedElements = [[ELCConsole mainConsole] numOfSelectedElements];
+    NSUInteger numOfSelectedElements = [[ELCConsole mainConsole] numOfSelectedElements];
     if (asset.index < numOfSelectedElements - 1) {
         NSMutableArray *arrayOfCellsToReload = [[NSMutableArray alloc] initWithCapacity:1];
         
@@ -278,6 +284,5 @@
     
     return count;
 }
-
 
 @end

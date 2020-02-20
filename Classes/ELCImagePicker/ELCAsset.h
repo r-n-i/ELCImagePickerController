@@ -6,7 +6,7 @@
 //
 
 #import <UIKit/UIKit.h>
-#import <AssetsLibrary/AssetsLibrary.h>
+#import <Photos/PHAsset.h>
 
 @class ELCAsset;
 
@@ -22,11 +22,14 @@
 
 @interface ELCAsset : NSObject
 
-@property (nonatomic, strong) ALAsset *asset;
+@property (nonatomic, strong) PHAsset *asset;
 @property (nonatomic, weak) id<ELCAssetDelegate> parent;
 @property (nonatomic, assign) BOOL selected;
-@property (nonatomic,assign) int index;
+@property (nonatomic,assign) NSUInteger index;
 
-- (id)initWithAsset:(ALAsset *)asset;
+- (id)initWithAsset:(PHAsset *)asset;
 - (NSComparisonResult)compareWithIndex:(ELCAsset *)_ass;
+
++ (NSPredicate*)assetFilterPredicate:(NSInteger)filter;
++ (NSPredicate*)slowmoFilterPredicate;
 @end

@@ -14,9 +14,9 @@
 }
 @property (nonatomic,assign) BOOL onOrder;
 + (ELCConsole *)mainConsole;
-- (void)addIndex:(int)index;
-- (void)removeIndex:(int)index;
+- (void)addIndex:(NSUInteger)index;
+- (void)removeIndex:(NSUInteger)index;
 - (int)currIndex;
-- (int)numOfSelectedElements;
+- (NSUInteger)numOfSelectedElements;
 - (void)removeAllIndex;
 @end
