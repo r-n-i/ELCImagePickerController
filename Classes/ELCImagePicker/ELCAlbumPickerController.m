@@ -196,7 +196,12 @@
     [[PHImageManager defaultManager] requestImageForAsset:assetsFetchResult.firstObject targetSize:CGSizeMake(156,156) contentMode:PHImageContentModeAspectFill options:options resultHandler:^(UIImage * _Nullable result, NSDictionary * _Nullable info) {
         cell.imageView.contentMode = UIViewContentModeScaleAspectFill;
         cell.imageView.clipsToBounds = YES;
-        [cell.imageView setImage:result];
+        CGSize itemSize = CGSizeMake(156, 156);
+        UIGraphicsBeginImageContextWithOptions(itemSize, NO, 0.0);
+        CGRect imageRect = CGRectMake(0, 0, itemSize.width, itemSize.height);
+        [result drawInRect:imageRect];
+        cell.imageView.image = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
     }];
     
     cell.textLabel.text = [NSString stringWithFormat:@"%@ (%ld)",g.localizedTitle, (long)gCount];
